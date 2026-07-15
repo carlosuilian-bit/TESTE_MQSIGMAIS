@@ -5,10 +5,8 @@ import re
 import xml.etree.ElementTree as ET
 import zipfile
 
-from shapely.geometry import Point
-
 from core.errors import CalcError
-from core.geometry import NS, haversine_m, join_trechos, parse_coords, to_utm_line, to_utm_point
+from core.geometry import NS, haversine_m, join_trechos, parse_coords
 from core.snv import resolve_br_uf_for_point
 
 _RE_NOME_MARCO = re.compile(r"BR-(\d+)\s+KM-(\d+)")
@@ -27,7 +25,7 @@ def kml_root_from_bytes(data: bytes):
 def parse_marcos_from_root(root):
     """
     Formato (a): Placemarks Point com nome "BR-NNN KM-MMM".
-    Retorna lista de {br, km_num, utm_pt}.
+    Retorna lista de {br, km_num, lon, lat}.
     """
     markers = []
     for pm in root.findall(".//kml:Placemark", NS):
@@ -50,8 +48,7 @@ def parse_marcos_from_root(root):
         except ValueError:
             continue
 
-        ux, uy = to_utm_point(lon, lat)
-        markers.append({"br": br, "km_num": km_num, "utm_pt": Point(ux, uy)})
+        markers.append({"br": br, "km_num": km_num, "lon": lon, "lat": lat})
     return markers
 
 
@@ -61,7 +58,7 @@ def parse_marcos_mq153_from_root(root, snv_tree, snv_segments):
     informação útil (ex: "kml_1"), mas com ExtendedData/SimpleData[@name='DESC']
     no padrão "km-NNN". A BR não vem no Placemark: é resolvida projetando o
     marco sobre a malha SNV e pegando a BR do segmento mais próximo.
-    Retorna lista de {br, km_num, utm_pt}.
+    Retorna lista de {br, km_num, lon, lat}.
     """
     markers = []
     for pm in root.findall(".//kml:Placemark", NS):
@@ -84,13 +81,11 @@ def parse_marcos_mq153_from_root(root, snv_tree, snv_segments):
         except ValueError:
             continue
 
-        ux, uy = to_utm_point(lon, lat)
-        pt_utm = Point(ux, uy)
-        br, _uf = resolve_br_uf_for_point(pt_utm, snv_tree, snv_segments)
+        br, _uf = resolve_br_uf_for_point(lon, lat, snv_tree, snv_segments)
         if br is None:
             continue
 
-        markers.append({"br": br, "km_num": km_num, "utm_pt": pt_utm})
+        markers.append({"br": br, "km_num": km_num, "lon": lon, "lat": lat})
     return markers
 
 
@@ -116,7 +111,9 @@ def parse_eixo_from_root(root):
       - LineStrings avulsas em Placemarks separados
       - Folders aninhados
     O eixo não precisa de atributos BR/UF — é usado apenas como geometria de percurso.
-    Retorna UTM LineString contínua única (ou None se vazio).
+    Retorna lista de coordenadas [(lon, lat), ...] contínua (ou None se vazio).
+    A projeção para UTM é feita depois, sob demanda, na zona certa para cada
+    ponto consultado (o eixo pode atravessar mais de uma zona UTM).
     """
     placemark_lines = []
 
@@ -141,4 +138,4 @@ def parse_eixo_from_root(root):
         return None
 
     merged = join_trechos(placemark_lines)
-    return to_utm_line(merged) if merged else None
+    return merged if merged else None

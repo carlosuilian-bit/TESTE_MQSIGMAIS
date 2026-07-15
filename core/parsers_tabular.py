@@ -3,10 +3,7 @@
 import json
 import os
 
-from shapely.geometry import Point
-
 from core.errors import CalcError
-from core.geometry import to_utm_point
 from core.snv import resolve_br_uf_for_point
 
 _LAT_KEYS = ("lat", "latitude")
@@ -92,12 +89,10 @@ def parse_pontos_file(filename: str, data: bytes) -> list:
 # ── Marcos quilométricos (lat, lon, km) ────────────────────────────────────
 
 def _marker_from_latlonkm(lat, lon, km_num, snv_tree, snv_segments):
-    ux, uy = to_utm_point(lon, lat)
-    pt_utm = Point(ux, uy)
-    br, _uf = resolve_br_uf_for_point(pt_utm, snv_tree, snv_segments)
+    br, _uf = resolve_br_uf_for_point(lon, lat, snv_tree, snv_segments)
     if br is None:
         return None
-    return {"br": br, "km_num": int(km_num), "utm_pt": pt_utm}
+    return {"br": br, "km_num": int(km_num), "lon": lon, "lat": lat}
 
 
 def parse_marcos_txt_csv(text: str, snv_tree, snv_segments) -> list:

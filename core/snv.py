@@ -3,9 +3,10 @@
 import xml.etree.ElementTree as ET
 import zipfile
 
+from shapely.geometry import LineString, Point
 from shapely.strtree import STRtree
 
-from core.geometry import NS, join_trechos, parse_coords, to_utm_line
+from core.geometry import NS, join_trechos, parse_coords, to_utm_line, to_utm_point, utm_epsg_for_lonlat
 
 
 def _iter_eixo_principal_placemarks(filepath):
@@ -67,7 +68,6 @@ def parse_kmz_snv(filepath, brs_filtro=None):
             "km_fim":        km_fim,
             "codigo":        codigo,
             "coords_lonlat": pts,
-            "line_utm":      to_utm_line(pts),
         })
 
     return segments
@@ -76,7 +76,7 @@ def parse_kmz_snv(filepath, brs_filtro=None):
 def build_snv_eixo(segments):
     """
     Une os trechos SNV por (BR, UF) em uma polilinha contínua.
-    Retorna {"{br}/{uf}": {br, uf, line_utm}}.
+    Retorna {"{br}/{uf}": {br, uf, coords_lonlat}}.
     """
     by_key = {}
     for s in segments:
@@ -89,9 +89,9 @@ def build_snv_eixo(segments):
         merged = join_trechos(info["trechos"])
         if merged:
             result[key] = {
-                "br":       info["br"],
-                "uf":       info["uf"],
-                "line_utm": to_utm_line(merged),
+                "br":            info["br"],
+                "uf":            info["uf"],
+                "coords_lonlat": merged,
             }
     return result
 
@@ -99,29 +99,57 @@ def build_snv_eixo(segments):
 def load_snv(kmz_path, brs_filtro=None):
     """Retorna (segments, tree, snv_eixo). tree é None se não houver segmentos."""
     segs = parse_kmz_snv(kmz_path, brs_filtro)
-    tree = STRtree([s["line_utm"] for s in segs]) if segs else None
+    # Índice espacial em lon/lat (graus) — usado só para achar o segmento
+    # CANDIDATO mais próximo (busca aproximada). A distância/posição exatas
+    # são recalculadas depois, reprojetando apenas o segmento vencedor na
+    # zona UTM correta para aquele ponto (ver nearest_snv_segment).
+    tree = STRtree([LineString(s["coords_lonlat"]) for s in segs]) if segs else None
     eixo = build_snv_eixo(segs)
     return segs, tree, eixo
 
 
-def nearest_snv_segment(pt_utm, tree, segments):
+def nearest_snv_segment(lon, lat, tree, segments, *, epsg=None, seg_utm_cache=None):
     """
-    Acha o segmento SNV mais próximo do ponto (em UTM) via STRtree.
-    Retorna {"seg", "proj_d", "seg_len", "dist_m"} ou None se não houver malha.
+    Acha o segmento SNV mais próximo do ponto via STRtree (busca aproximada
+    em lon/lat) e recalcula a posição exata reprojetando só o segmento
+    vencedor para a zona UTM apropriada ao ponto (resolvida automaticamente
+    a partir da longitude, a menos que `epsg` seja informado explicitamente).
+
+    `seg_utm_cache`: dict opcional {(idx, epsg): LineString} para reaproveitar
+    a reprojeção entre pontos consecutivos que caem no mesmo segmento/zona.
+
+    Retorna {"seg", "seg_line_utm", "epsg", "proj_d", "seg_len", "dist_m"}
+    ou None se não houver malha carregada.
     """
     if tree is None or not segments:
         return None
-    idx     = tree.nearest(pt_utm)
-    seg     = segments[idx]
-    proj_d  = seg["line_utm"].project(pt_utm)
-    seg_len = seg["line_utm"].length
-    dist_m  = seg["line_utm"].distance(pt_utm)
-    return {"seg": seg, "proj_d": proj_d, "seg_len": seg_len, "dist_m": dist_m}
+
+    idx = tree.nearest(Point(lon, lat))
+    seg = segments[idx]
+    if epsg is None:
+        epsg = utm_epsg_for_lonlat(lon, lat)
+
+    cache_key = (idx, epsg)
+    if seg_utm_cache is not None and cache_key in seg_utm_cache:
+        seg_line_utm = seg_utm_cache[cache_key]
+    else:
+        seg_line_utm = to_utm_line(seg["coords_lonlat"], epsg)
+        if seg_utm_cache is not None:
+            seg_utm_cache[cache_key] = seg_line_utm
+
+    click_utm = Point(*to_utm_point(lon, lat, epsg))
+    proj_d  = seg_line_utm.project(click_utm)
+    seg_len = seg_line_utm.length
+    dist_m  = seg_line_utm.distance(click_utm)
+    return {
+        "seg": seg, "seg_line_utm": seg_line_utm, "epsg": epsg,
+        "proj_d": proj_d, "seg_len": seg_len, "dist_m": dist_m,
+    }
 
 
-def resolve_br_uf_for_point(pt_utm, tree, segments):
+def resolve_br_uf_for_point(lon, lat, tree, segments):
     """Wrapper fino sobre nearest_snv_segment: devolve só (br, uf), ou (None, None)."""
-    nearest = nearest_snv_segment(pt_utm, tree, segments)
+    nearest = nearest_snv_segment(lon, lat, tree, segments)
     if nearest is None:
         return None, None
     return nearest["seg"]["br"], nearest["seg"]["uf"]
