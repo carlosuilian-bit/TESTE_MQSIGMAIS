@@ -7,7 +7,7 @@ from core.parsers_kml import kml_root_from_bytes, parse_eixo_from_root, parse_ma
 from core.parsers_tabular import parse_marcos_file
 from core.projection import build_eixo_mq_proj, build_snv_mq_proj
 from core.snv import nearest_snv_segment
-from core.geometry import from_utm_point, to_utm_point
+from core.geometry import from_utm_line, from_utm_point, to_utm_point
 
 
 def _find_ref_marco(markers_sorted, d_query):
@@ -168,7 +168,44 @@ def calcular_pontos(pontos, marcos_file=None, eixo_file=None, *,
         "camadas_disponiveis": camadas,
         "total_pontos":        len(resultados),
         "resultados":          resultados,
+        "debug":               _build_debug_geometrias(resultados, session_marcos,
+                                                         session_eixo_line, snv_eixo),
     }
+
+
+def _build_debug_geometrias(resultados, session_marcos, session_eixo_line, snv_eixo):
+    """
+    Monta geometrias auxiliares (lon/lat) para diagnóstico visual: eixo(s) SNV
+    efetivamente usados pelos pontos calculados, eixo do usuário e marcos.
+    """
+    debug = {}
+
+    brs_uf_usados = {
+        (r["snv"]["br"], r["snv"]["uf"])
+        for r in resultados
+        if "snv" in r and "erro" not in r["snv"]
+    }
+    if brs_uf_usados:
+        debug["eixo_snv"] = {}
+        for br, uf in sorted(brs_uf_usados):
+            key      = f"{br}/{uf}"
+            eixo_inf = snv_eixo.get(key)
+            if eixo_inf:
+                debug["eixo_snv"][key] = from_utm_line(eixo_inf["line_utm"])
+
+    if session_marcos:
+        debug["marcos"] = []
+        for mk in session_marcos:
+            lon, lat = from_utm_point(mk["utm_pt"].x, mk["utm_pt"].y)
+            debug["marcos"].append({
+                "br": mk["br"], "km_num": mk["km_num"],
+                "lat": round(lat, 7), "lon": round(lon, 7),
+            })
+
+    if session_eixo_line is not None:
+        debug["eixo_usuario"] = from_utm_line(session_eixo_line)
+
+    return debug
 
 
 def flatten_resultados(body: dict) -> list:

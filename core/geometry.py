@@ -24,6 +24,11 @@ def from_utm_point(x, y):
     return _from_utm.transform(x, y)
 
 
+def from_utm_line(line_utm):
+    """Converte uma LineString UTM em lista de [lon, lat] (para plotagem em mapa)."""
+    return [list(_from_utm.transform(x, y)) for x, y in line_utm.coords]
+
+
 def haversine_m(lon1, lat1, lon2, lat2):
     R = 6_371_000.0
     p1, p2 = math.radians(lat1), math.radians(lat2)
