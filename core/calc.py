@@ -1,5 +1,7 @@
 """Lógica de cálculo por camada + orquestrador principal (sem dependência de Flask)."""
 
+import math
+
 from shapely.geometry import Point
 
 from core.errors import CalcError
@@ -10,19 +12,40 @@ from core.snv import nearest_snv_segment
 from core.geometry import from_utm_line, from_utm_point, to_utm_point
 
 
-def _find_ref_marco(markers_sorted, d_query):
+def _interpolate_km(markers_sorted, d_query):
     """
-    Encontra o último marco cuja posição no eixo é <= d_query.
-    Retorna (marco, metragem_metros).
+    Interpola a posição quilométrica entre os dois marcos consecutivos (por
+    d_on_eixo) que envolvem d_query.
+
+    Independente do sentido em que o eixo foi desenhado: o KM físico pode
+    crescer OU decrescer conforme d_on_eixo aumenta (depende de como o KML
+    foi digitalizado), e a interpolação linear entre os dois marcos vizinhos
+    lida com ambos os casos corretamente — diferente de simplesmente pegar o
+    marco anterior e somar metros, que só funciona se o KM crescer no mesmo
+    sentido do eixo.
+
+    Retorna (km, metros).
     """
-    ref = markers_sorted[0]
-    for mk in markers_sorted:
-        if mk["d_on_eixo"] <= d_query:
-            ref = mk
-        else:
+    if len(markers_sorted) == 1:
+        return markers_sorted[0]["km_num"], 0
+
+    idx = len(markers_sorted) - 2
+    for i in range(len(markers_sorted) - 1):
+        if markers_sorted[i]["d_on_eixo"] <= d_query <= markers_sorted[i + 1]["d_on_eixo"]:
+            idx = i
             break
-    metros = max(0, min(999, round(d_query - ref["d_on_eixo"])))
-    return ref, metros
+    else:
+        if d_query < markers_sorted[0]["d_on_eixo"]:
+            idx = 0
+
+    a, b = markers_sorted[idx], markers_sorted[idx + 1]
+    span = b["d_on_eixo"] - a["d_on_eixo"]
+    frac = (d_query - a["d_on_eixo"]) / span if span > 0 else 0.0
+
+    km_pos = a["km_num"] + (b["km_num"] - a["km_num"]) * frac
+    km     = math.floor(km_pos)
+    metros = max(0, min(999, round((km_pos - km) * 1000)))
+    return km, metros
 
 
 def _calc_camada1(click_pt, snv_tree, snv_segments):
@@ -66,11 +89,11 @@ def _calc_camada2(click_pt, br, uf, snv_eixo, snv_mq_proj):
     if not eixo_inf or not markers:
         return None
 
-    d_query     = eixo_inf["line_utm"].project(click_pt)
-    ref, metros = _find_ref_marco(markers, d_query)
+    d_query    = eixo_inf["line_utm"].project(click_pt)
+    km, metros = _interpolate_km(markers, d_query)
     return {
-        "resultado": f"{ref['km_num']}+{metros:03d}",
-        "km":        ref["km_num"],
+        "resultado": f"{km}+{metros:03d}",
+        "km":        km,
         "metros":    metros,
         "br":        br,
         "uf":        uf,
@@ -83,11 +106,11 @@ def _calc_camada3(click_pt, br, eixo_line, eixo_mq_proj):
     if not eixo_line or not markers:
         return None
 
-    d_query     = eixo_line.project(click_pt)
-    ref, metros = _find_ref_marco(markers, d_query)
+    d_query    = eixo_line.project(click_pt)
+    km, metros = _interpolate_km(markers, d_query)
     return {
-        "resultado": f"{ref['km_num']}+{metros:03d}",
-        "km":        ref["km_num"],
+        "resultado": f"{km}+{metros:03d}",
+        "km":        km,
         "metros":    metros,
         "br":        br,
     }
