@@ -25,6 +25,7 @@ from core.snv import list_brs_in_kmz, load_snv
 
 _DIR    = os.path.dirname(os.path.abspath(__file__))
 KMZ_SNV = os.path.join(_DIR, "SNV_202604A.kmz")
+SNV_CACHE_VERSION = "principal-variante-v1"
 
 st.set_page_config(page_title="Localizador KM Rodoviário", layout="wide")
 
@@ -37,7 +38,8 @@ def _brs_disponiveis():
 
 
 @st.cache_resource(show_spinner="Carregando malha SNV...", max_entries=5)
-def _load_snv_cached(brs_filtro: tuple):
+def _load_snv_cached(brs_filtro: tuple, cache_version: str):
+    _ = cache_version
     return load_snv(KMZ_SNV, set(brs_filtro) if brs_filtro else None)
 
 
@@ -62,9 +64,10 @@ with st.sidebar:
         help="Vazio = carrega a malha nacional completa (mais lento, mais memória).",
     )
 
-    snv_segments, snv_tree, snv_eixo = _load_snv_cached(tuple(sorted(brs_sel)))
+    snv_segments, snv_tree, snv_eixo = _load_snv_cached(tuple(sorted(brs_sel)), SNV_CACHE_VERSION)
     brs_carregadas = sorted({s["br"] for s in snv_segments})
     st.success(f"{len(snv_segments)} trechos carregados (principal + variantes)\nBRs: {brs_carregadas}")
+    st.caption(f"Cache SNV: {SNV_CACHE_VERSION}")
 
 st.subheader("Arquivos de entrada")
 col1, col2, col3 = st.columns(3)
