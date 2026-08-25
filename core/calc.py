@@ -1,7 +1,6 @@
 """Lógica de cálculo por camada + orquestrador principal (sem dependência de Flask)."""
 
 from shapely.geometry import Point
-from shapely.ops import substring
 
 from core.errors import CalcError
 from core.parsers_kml import kml_root_from_bytes, parse_eixo_from_root
@@ -22,72 +21,22 @@ def _pair_distance_score(a, b, click_utm_pt):
     )
 
 
-def _pair_is_discontinuous(a, b):
-    """
-    Detecta um salto de numeração entre os dois marcos do par (ex: KM 831
-    seguido de KM 0 na divisa de UF, ou o fim de um trevo/alça voltando pro
-    KM 0) — casos em que "menor km = base, soma metros pra frente" não faz
-    sentido, porque não existe um trecho contínuo de 0 a 999m entre eles.
-
-    Marcos reais ficam em torno de 1000m um do outro; um salto grande de km
-    (>1) cuja distância física real é muito menor do que esse salto sugere
-    (< 200m por unidade de km) indica reinício de numeração, não apenas
-    marcos espaçados/faltando no meio.
-    """
-    delta_km = abs(a["km_num"] - b["km_num"])
-    if delta_km <= 1:
-        return False
-    dist_ab = a["utm_pt"].distance(b["utm_pt"])
-    return dist_ab < delta_km * 200
-
-
-def _base_marker_for_pair(a, b, click_utm_pt):
-    """
-    Escolhe o marco-base do par. Caso normal (numeração contínua): usa
-    sempre o menor km como base, contando metros pra frente (convenção
-    padrão de quilometragem). Caso haja um salto de numeração entre os
-    dois, não existe "menor km" significativo — usa o marco fisicamente
-    mais próximo do ponto consultado como referência.
-    """
-    if _pair_is_discontinuous(a, b):
-        da = a["utm_pt"].distance(click_utm_pt)
-        db = b["utm_pt"].distance(click_utm_pt)
-        return a if da <= db else b
-    return a if a["km_num"] <= b["km_num"] else b
-
-
-def _local_projection(markers_sorted, idx, click_utm_pt, eixo_line_utm):
-    """
-    Projeta click_utm_pt perpendicularmente sobre o trecho do eixo entre os
-    marcos markers_sorted[idx] e markers_sorted[idx+1] apenas (não sobre o
-    eixo inteiro). Retorna (local_d, comprimento_do_trecho, ponto_utm_projetado)
-    ou None se o trecho for degenerado.
-    """
-    a, b = markers_sorted[idx], markers_sorted[idx + 1]
-    d_a, d_b = a["d_on_eixo"], b["d_on_eixo"]
-    if d_b <= d_a:
-        return None
-    trecho = substring(eixo_line_utm, d_a, d_b)
-    if trecho.is_empty or trecho.length == 0:
-        return None
-    local_d = trecho.project(click_utm_pt)
-    return local_d, trecho.length, trecho.interpolate(local_d)
+def _base_marker_for_pair(a, b):
+    """Escolhe o marco-base; KM 0 so vale como base quando ligado ao KM 1."""
+    if a["km_num"] == 0 and b["km_num"] != 1:
+        return b, -1
+    if b["km_num"] == 0 and a["km_num"] != 1:
+        return a, 1
+    if a["km_num"] <= b["km_num"]:
+        return a, 1
+    return b, -1
 
 
 def _interpolate_km(markers_sorted, click_utm_pt, eixo_line_utm, epsg):
     """
-    Calcula a quilometragem escolhendo o par de marcos vizinhos fisicamente
-    mais próximo do ponto (soma das distâncias reais aos dois marcos) e
-    projetando o ponto perpendicularmente apenas sobre o trecho do eixo
-    entre esses dois marcos — nunca sobre o eixo inteiro.
-
-    Usar a projeção do eixo inteiro (ou escolher o par pela distância
-    perpendicular a um trecho longo) é arriscado quando a rodovia faz uma
-    curva fechada ou um retorno perto de si mesma (ex: trevo, alça de
-    acesso): o trecho fisicamente distante em termos de km pode passar
-    perto do ponto e "roubar" a escolha, fazendo o cálculo saltar para uma
-    quilometragem completamente errada. Escolher o par pelos marcos mais
-    próximos (não pelo trecho) evita esse salto.
+    Projeta o ponto perpendicularmente no eixo usado e calcula a distancia
+    percorrida no proprio eixo a partir do marco-base do par que envolve a
+    projecao.
 
     Se os marcos KM 153 e KM 154 estao separados por 1500 m, um ponto a
     700 m do KM 153 vira 153+700; um ponto a 1010 m vira 153+999. O teto
@@ -95,29 +44,37 @@ def _interpolate_km(markers_sorted, click_utm_pt, eixo_line_utm, epsg):
 
     Retorna (km, metros, lon_projetado, lat_projetado).
     """
+    d_query = eixo_line_utm.project(click_utm_pt)
+    proj_pt = eixo_line_utm.interpolate(d_query)
+
     if len(markers_sorted) == 1:
         mk = markers_sorted[0]
-        return mk["km_num"], 0, mk["lon"], mk["lat"]
+        plon, plat = from_utm_point(proj_pt.x, proj_pt.y, epsg)
+        return mk["km_num"], 0, plon, plat
 
-    idx = min(
-        range(len(markers_sorted) - 1),
-        key=lambda i: _pair_distance_score(markers_sorted[i], markers_sorted[i + 1], click_utm_pt),
-    )
+    bracket_pairs = [
+        i for i in range(len(markers_sorted) - 1)
+        if markers_sorted[i]["d_on_eixo"] <= d_query <= markers_sorted[i + 1]["d_on_eixo"]
+    ]
+
+    if bracket_pairs:
+        idx = min(
+            bracket_pairs,
+            key=lambda i: _pair_distance_score(markers_sorted[i], markers_sorted[i + 1], proj_pt),
+        )
+    elif d_query < markers_sorted[0]["d_on_eixo"]:
+        idx = 0
+    else:
+        idx = len(markers_sorted) - 2
+
     a, b = markers_sorted[idx], markers_sorted[idx + 1]
-    base = _base_marker_for_pair(a, b, click_utm_pt)
-
-    proj = _local_projection(markers_sorted, idx, click_utm_pt, eixo_line_utm)
-    if proj is None:
-        # Trecho degenerado (marcos na mesma posição do eixo): usa o
-        # marco-base diretamente, sem interpolação.
-        return base["km_num"], 0, base["lon"], base["lat"]
-
-    local_d, comprimento, proj_pt = proj
-    offset_m = local_d if base is a else (comprimento - local_d)
+    base, direction = _base_marker_for_pair(a, b)
+    km = base["km_num"]
+    offset_m = (d_query - base["d_on_eixo"]) * direction
 
     metros = max(0, min(999, round(offset_m)))
     plon, plat = from_utm_point(proj_pt.x, proj_pt.y, epsg)
-    return base["km_num"], metros, plon, plat
+    return km, metros, plon, plat
 
 
 def _calc_camada1(lon, lat, click_utm_pt, epsg, snv_tree, snv_segments, seg_utm_cache):
@@ -233,7 +190,6 @@ class _ZoneCache:
                     eixo_line_utm,
                     epsg,
                     route_tipo_sigla=eixo_info.get("tipo_sigla") if eixo_info else None,
-                    uf_filter=uf,
                 )
                 if eixo_line_utm is not None else []
             )
