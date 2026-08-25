@@ -122,16 +122,21 @@ if calcular:
                 pontos, marcos_file=marcos_file, eixo_file=eixo_file,
                 snv_segments=snv_segments, snv_tree=snv_tree, snv_eixo=snv_eixo,
             )
+            st.session_state["resultado_body"] = body
     except CalcError as e:
         st.error(f"[{e.codigo}] {e.mensagem}")
         st.stop()
 
+body = st.session_state.get("resultado_body")
+
+if body:
     st.success(
         f"{body['total_pontos']} ponto(s) calculado(s) — "
         f"camadas disponíveis: {', '.join(body['camadas_disponiveis'])}"
     )
 
-    df = pd.DataFrame(flatten_resultados(body))
+    linhas_resultado = flatten_resultados(body)
+    df = pd.DataFrame(linhas_resultado)
     st.dataframe(df, use_container_width=True)
 
     df_download = pd.DataFrame(flatten_resultados_download(body))
@@ -141,6 +146,28 @@ if calcular:
         file_name="resultados_km.csv",
         mime="text/csv",
     )
+
+    linhas_com_coord = [
+        row for row in linhas_resultado
+        if row.get("lat") is not None and row.get("lon") is not None
+    ]
+    ponto_mapa = None
+    if linhas_com_coord:
+        ponto_labels = {"__todos__": "Todos os pontos"}
+        ponto_options = ["__todos__"]
+        for row in linhas_com_coord:
+            indice = row.get("indice")
+            km = row.get("eixo_mq_resultado") or row.get("snv_mq_resultado") or row.get("snv_resultado") or "-"
+            id_txt = f" | {row['id']}" if row.get("id") else ""
+            ponto_options.append(indice)
+            ponto_labels[indice] = f"#{indice}{id_txt} | {km}"
+
+        ponto_escolhido = st.selectbox(
+            "Filtrar ponto no mapa",
+            options=ponto_options,
+            format_func=lambda value: ponto_labels.get(value, str(value)),
+        )
+        ponto_mapa = None if ponto_escolhido == "__todos__" else ponto_escolhido
 
     debug = body.get("debug", {})
 
@@ -161,6 +188,7 @@ if calcular:
 
         layers = []
         focus_coords = []  # usados para enquadrar o mapa — só a área de interesse do usuário
+        selected_position = None
 
         for key, coords in debug.get("eixo_snv", {}).items():
             layers.append(pdk.Layer(
@@ -185,7 +213,8 @@ if calcular:
                 width_min_pixels=2,
                 pickable=True,
             ))
-            focus_coords.extend(debug["eixo_usuario"])
+            if ponto_mapa is None:
+                focus_coords.extend(debug["eixo_usuario"])
 
         if debug.get("marcos"):
             marcos_data = [
@@ -202,24 +231,33 @@ if calcular:
                 radius_min_pixels=3,
                 pickable=True,
             ))
-            focus_coords.extend(m["position"] for m in marcos_data)
+            if ponto_mapa is None:
+                focus_coords.extend(m["position"] for m in marcos_data)
 
         pontos_data = [
-            {"position": [row["lon"], row["lat"]],
-             "label": f"Ponto #{row['indice']}: SNV {row.get('snv_resultado', '-')} "
+            {"indice": row["indice"],
+             "position": [row["lon"], row["lat"]],
+             "label": f"Ponto #{row['indice']}"
+                      f"{' | ID ' + row['id'] if row.get('id') else ''}: "
+                      f"SNV {row.get('snv_resultado', '-')} "
                       f"| SNV+MQ {row.get('snv_mq_resultado', '-')} "
                       f"| Eixo+MQ {row.get('eixo_mq_resultado', '-')}"}
-            for row in flatten_resultados(body)
+            for row in linhas_resultado
             if row.get("lat") is not None and row.get("lon") is not None
         ]
+        if ponto_mapa is not None:
+            pontos_data = [p for p in pontos_data if p["indice"] == ponto_mapa]
+            if pontos_data:
+                selected_position = pontos_data[0]["position"]
+
         if pontos_data:
             layers.append(pdk.Layer(
                 "ScatterplotLayer",
                 data=pontos_data,
                 get_position="position",
                 get_fill_color=COR_PONTO,
-                get_radius=35,
-                radius_min_pixels=4,
+                get_radius=60 if ponto_mapa is not None else 35,
+                radius_min_pixels=7 if ponto_mapa is not None else 4,
                 pickable=True,
             ))
             focus_coords.extend(p["position"] for p in pontos_data)
@@ -231,8 +269,15 @@ if calcular:
                 focus_coords.extend(coords)
 
         if focus_coords:
-            view_state = pdk.data_utils.compute_view(focus_coords, view_proportion=0.7)
-            view_state.zoom = min(view_state.zoom, 16)
+            if selected_position:
+                view_state = pdk.ViewState(
+                    longitude=selected_position[0],
+                    latitude=selected_position[1],
+                    zoom=15,
+                )
+            else:
+                view_state = pdk.data_utils.compute_view(focus_coords, view_proportion=0.7)
+                view_state.zoom = min(view_state.zoom, 16)
             st.pydeck_chart(pdk.Deck(
                 layers=layers,
                 initial_view_state=view_state,
@@ -240,7 +285,8 @@ if calcular:
                 map_style=None,
             ))
     elif {"lat", "lon"}.issubset(df.columns):
-        mapa_df = df[["lat", "lon"]].dropna().rename(columns={"lat": "latitude", "lon": "longitude"})
+        mapa_base = df if ponto_mapa is None else df[df["indice"] == ponto_mapa]
+        mapa_df = mapa_base[["lat", "lon"]].dropna().rename(columns={"lat": "latitude", "lon": "longitude"})
         if not mapa_df.empty:
             st.subheader("Mapa dos pontos consultados")
             st.map(mapa_df)
