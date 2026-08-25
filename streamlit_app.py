@@ -219,7 +219,7 @@ if body:
                 get_position="position",
                 get_fill_color=COR_MARCO,
                 radius_units="pixels",
-                get_radius=5,
+                get_radius=3,
                 pickable=True,
             ))
             if ponto_mapa is None:
@@ -248,7 +248,7 @@ if body:
                 get_position="position",
                 get_fill_color=COR_PONTO,
                 radius_units="pixels",
-                get_radius=9 if ponto_mapa is not None else 6,
+                get_radius=5 if ponto_mapa is not None else 3,
                 pickable=True,
             ))
             focus_coords.extend(p["position"] for p in pontos_data)
@@ -287,7 +287,7 @@ if body:
                     get_position=["longitude", "latitude"],
                     get_fill_color=[239, 68, 68],
                     radius_units="pixels",
-                    get_radius=6,
+                    get_radius=3,
                     pickable=True,
                 )],
                 initial_view_state=pdk.ViewState(
