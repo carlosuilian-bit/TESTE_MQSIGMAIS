@@ -54,6 +54,11 @@ tempo de carregamento e reduz o uso de memória, algo especialmente
 importante no Streamlit Community Cloud (recursos limitados). Deixar o
 filtro vazio carrega o Brasil inteiro.
 
+O carregamento do SNV inclui `Eixo Principal` e `Variante`. As variantes sao
+mantidas como eixos separados do principal (ex: `40/RJ/V1`), para trechos em
+que subida e descida usam geometrias diferentes. Tipos como acesso, contorno,
+anel e travessia urbana continuam fora da malha de calculo.
+
 ## Formatos de arquivo aceitos
 
 ### Pontos a Verificar (obrigatório)

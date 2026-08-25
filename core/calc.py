@@ -77,6 +77,8 @@ def _calc_camada1(lon, lat, click_utm_pt, epsg, snv_tree, snv_segments, seg_utm_
         "br":         seg["br"],
         "uf":         seg["uf"],
         "codigo_snv": seg["codigo"],
+        "tipo_snv":   seg.get("tipo"),
+        "snv_eixo_key": seg.get("eixo_key", f"{seg['br']}/{seg['uf']}"),
         "proj_lat":   round(plat, 7),
         "proj_lon":   round(plon, 7),
         "dist_m":     round(nearest["dist_m"], 1),
@@ -137,11 +139,11 @@ class _ZoneCache:
         self._eixo_mq_proj        = {}   # (br, epsg)  -> markers projetados
         self.seg_utm_cache        = {}   # (idx, epsg) -> LineString (segmentos SNV)
 
-    def snv_mq_markers(self, br, uf, epsg):
-        key       = f"{br}/{uf}"
+    def snv_mq_markers(self, br, uf, epsg, eixo_key=None):
+        key       = eixo_key or f"{br}/{uf}"
         cache_key = (key, epsg)
         if cache_key not in self._snv_eixo_utm:
-            eixo_info = self._snv_eixo.get(key)
+            eixo_info = self._snv_eixo.get(key) or self._snv_eixo.get(f"{br}/{uf}")
             self._snv_eixo_utm[cache_key] = (
                 to_utm_line(eixo_info["coords_lonlat"], epsg) if eixo_info else None
             )
@@ -235,7 +237,7 @@ def calcular_pontos(pontos, marcos_file=None, eixo_file=None, *,
         uf = r1["uf"] if r1 else None
 
         if "snv_mq" in camadas and br and uf:
-            eixo_utm, markers_proj = zc.snv_mq_markers(br, uf, epsg)
+            eixo_utm, markers_proj = zc.snv_mq_markers(br, uf, epsg, r1.get("snv_eixo_key"))
             r2 = _calc_camada2(click_utm, br, uf, eixo_utm, markers_proj)
             res["snv_mq"] = r2 or {"erro": f"Sem marcos para BR-{br}/{uf}"}
 
@@ -265,16 +267,17 @@ def _build_debug_geometrias(resultados, session_marcos, session_eixo_lonlat, zc)
     debug = {}
 
     brs_uf_epsg_usados = {
-        (r["snv"]["br"], r["snv"]["uf"], r["utm_epsg"])
+        (r["snv"]["br"], r["snv"]["uf"], r["utm_epsg"], r["snv"].get("snv_eixo_key"))
         for r in resultados
         if "snv" in r and "erro" not in r["snv"]
     }
     if brs_uf_epsg_usados:
         debug["eixo_snv"] = {}
-        for br, uf, epsg in sorted(brs_uf_epsg_usados):
-            eixo_line_utm, _ = zc.snv_mq_markers(br, uf, epsg)
+        for br, uf, epsg, eixo_key in sorted(brs_uf_epsg_usados):
+            eixo_line_utm, _ = zc.snv_mq_markers(br, uf, epsg, eixo_key)
             if eixo_line_utm is not None:
-                debug["eixo_snv"].setdefault(f"{br}/{uf}", from_utm_line(eixo_line_utm, epsg))
+                debug["eixo_snv"].setdefault(eixo_key or f"{br}/{uf}",
+                                             from_utm_line(eixo_line_utm, epsg))
 
     if session_marcos:
         debug["marcos"] = [
@@ -306,6 +309,8 @@ def flatten_resultados(body: dict) -> list:
         row["snv_resultado"] = snv.get("resultado", "-") if "erro" not in snv else f"[{snv['erro']}]"
         row["snv_br"]        = snv.get("br")
         row["snv_uf"]        = snv.get("uf")
+        row["snv_codigo_snv"] = snv.get("codigo_snv")
+        row["snv_tipo_snv"]  = snv.get("tipo_snv")
         row["snv_dist_m"]    = snv.get("dist_m")
 
         if "snv_mq" in camadas:

@@ -64,7 +64,7 @@ with st.sidebar:
 
     snv_segments, snv_tree, snv_eixo = _load_snv_cached(tuple(sorted(brs_sel)))
     brs_carregadas = sorted({s["br"] for s in snv_segments})
-    st.success(f"{len(snv_segments)} trechos carregados\nBRs: {brs_carregadas}")
+    st.success(f"{len(snv_segments)} trechos carregados (principal + variantes)\nBRs: {brs_carregadas}")
 
 st.subheader("Arquivos de entrada")
 col1, col2, col3 = st.columns(3)
