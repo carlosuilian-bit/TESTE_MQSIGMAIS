@@ -12,7 +12,18 @@ from core.snv import nearest_snv_segment
 from core.geometry import from_utm_line, from_utm_point, to_utm_line, to_utm_point, utm_epsg_for_lonlat
 
 
-def _interpolate_km(markers_sorted, d_query):
+def _pair_distance_score(a, b, click_utm_pt):
+    if click_utm_pt is None:
+        return 0
+    return (
+        a["utm_pt"].distance(click_utm_pt)
+        + b["utm_pt"].distance(click_utm_pt)
+        + a.get("dist_to_eixo_m", 0)
+        + b.get("dist_to_eixo_m", 0)
+    )
+
+
+def _interpolate_km(markers_sorted, d_query, click_utm_pt=None):
     """
     Interpola a posição quilométrica entre os dois marcos consecutivos (por
     d_on_eixo) que envolvem d_query.
@@ -29,14 +40,20 @@ def _interpolate_km(markers_sorted, d_query):
     if len(markers_sorted) == 1:
         return markers_sorted[0]["km_num"], 0
 
-    idx = len(markers_sorted) - 2
-    for i in range(len(markers_sorted) - 1):
-        if markers_sorted[i]["d_on_eixo"] <= d_query <= markers_sorted[i + 1]["d_on_eixo"]:
-            idx = i
-            break
+    bracket_pairs = [
+        i for i in range(len(markers_sorted) - 1)
+        if markers_sorted[i]["d_on_eixo"] <= d_query <= markers_sorted[i + 1]["d_on_eixo"]
+    ]
+
+    if bracket_pairs:
+        idx = min(
+            bracket_pairs,
+            key=lambda i: _pair_distance_score(markers_sorted[i], markers_sorted[i + 1], click_utm_pt),
+        )
+    elif d_query < markers_sorted[0]["d_on_eixo"]:
+        idx = 0
     else:
-        if d_query < markers_sorted[0]["d_on_eixo"]:
-            idx = 0
+        idx = len(markers_sorted) - 2
 
     a, b = markers_sorted[idx], markers_sorted[idx + 1]
     span = b["d_on_eixo"] - a["d_on_eixo"]
@@ -91,7 +108,7 @@ def _calc_camada2(click_utm_pt, br, uf, eixo_line_utm, markers_proj):
         return None
 
     d_query    = eixo_line_utm.project(click_utm_pt)
-    km, metros = _interpolate_km(markers_proj, d_query)
+    km, metros = _interpolate_km(markers_proj, d_query, click_utm_pt)
     return {
         "resultado": f"{km}+{metros:03d}",
         "km":        km,
@@ -107,7 +124,7 @@ def _calc_camada3(click_utm_pt, br, eixo_line_utm, markers_proj):
         return None
 
     d_query    = eixo_line_utm.project(click_utm_pt)
-    km, metros = _interpolate_km(markers_proj, d_query)
+    km, metros = _interpolate_km(markers_proj, d_query, click_utm_pt)
     return {
         "resultado": f"{km}+{metros:03d}",
         "km":        km,
@@ -147,11 +164,19 @@ class _ZoneCache:
             self._snv_eixo_utm[cache_key] = (
                 to_utm_line(eixo_info["coords_lonlat"], epsg) if eixo_info else None
             )
+        else:
+            eixo_info = self._snv_eixo.get(key) or self._snv_eixo.get(f"{br}/{uf}")
         eixo_line_utm = self._snv_eixo_utm[cache_key]
 
         if cache_key not in self._snv_mq_proj:
             self._snv_mq_proj[cache_key] = (
-                project_markers_onto_line(self._session_marcos, br, eixo_line_utm, epsg)
+                project_markers_onto_line(
+                    self._session_marcos,
+                    br,
+                    eixo_line_utm,
+                    epsg,
+                    route_tipo_sigla=eixo_info.get("tipo_sigla") if eixo_info else None,
+                )
                 if eixo_line_utm is not None else []
             )
         return eixo_line_utm, self._snv_mq_proj[cache_key]

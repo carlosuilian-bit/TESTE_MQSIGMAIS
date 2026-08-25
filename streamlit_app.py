@@ -25,7 +25,7 @@ from core.snv import list_brs_in_kmz, load_snv
 
 _DIR    = os.path.dirname(os.path.abspath(__file__))
 KMZ_SNV = os.path.join(_DIR, "SNV_202604A.kmz")
-SNV_CACHE_VERSION = "principal-variante-v1"
+SNV_CACHE_VERSION = "principal-variante-v2"
 
 st.set_page_config(page_title="Localizador KM Rodoviário", layout="wide")
 

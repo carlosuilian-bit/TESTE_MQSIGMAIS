@@ -19,6 +19,8 @@ _RE_DESC_KM    = re.compile(r"\bkm[-_\s]*(\d+)\b", re.IGNORECASE)
 _RE_INTEIRO    = re.compile(r"^\d+$")
 _RE_BR_HINT    = re.compile(r"(?:^|[^A-Z0-9])(?:BR|MQ)[-_\s]*0*(\d{1,3})(?=$|[^A-Z0-9])",
                              re.IGNORECASE)
+_RE_VARIANTE_HINT  = re.compile(r"(?:^|[^A-Z0-9])(?:V|VARIANTE)(?=$|[^A-Z0-9])", re.IGNORECASE)
+_RE_PRINCIPAL_HINT = re.compile(r"(?:^|[^A-Z0-9])(?:B|EP|PRINCIPAL)(?=$|[^A-Z0-9])", re.IGNORECASE)
 
 
 def kml_root_from_bytes(data: bytes):
@@ -45,18 +47,29 @@ def _br_hint_from_text(text: str):
     return _normaliza_br(m.group(1)) if m else None
 
 
-def _iter_placemarks_with_br_hint(el, inherited_br=None):
-    """Itera Placemarks carregando pista de BR vinda de Document/Folder."""
+def _tipo_hint_from_text(text: str):
+    if _RE_VARIANTE_HINT.search(text or ""):
+        return "V"
+    if _RE_PRINCIPAL_HINT.search(text or ""):
+        return "B"
+    return None
+
+
+def _iter_placemarks_with_hints(el, inherited_br=None, inherited_tipo=None):
+    """Itera Placemarks carregando pistas vindas de Document/Folder."""
     current_br = inherited_br
+    current_tipo = inherited_tipo
     if el.tag in (_KML_DOCUMENT_TAG, _KML_FOLDER_TAG):
-        current_br = _br_hint_from_text(_nome_el_text(el)) or current_br
+        name = _nome_el_text(el)
+        current_br = _br_hint_from_text(name) or current_br
+        current_tipo = _tipo_hint_from_text(name) or current_tipo
 
     if el.tag == _KML_PLACEMARK_TAG:
-        yield el, current_br
+        yield el, current_br, current_tipo
         return
 
     for child in list(el):
-        yield from _iter_placemarks_with_br_hint(child, current_br)
+        yield from _iter_placemarks_with_hints(child, current_br, current_tipo)
 
 
 def _km_from_text(text: str, allow_plain_number=False):
@@ -129,7 +142,7 @@ def parse_marcos_mq153_from_root(root, snv_tree, snv_segments):
     """
     markers = []
     used_br_hint = False
-    for pm, br_hint in _iter_placemarks_with_br_hint(root):
+    for pm, br_hint, tipo_hint in _iter_placemarks_with_hints(root):
         km_num = None
 
         desc_el = pm.find(".//kml:SimpleData[@name='DESC']", NS)
@@ -153,7 +166,10 @@ def parse_marcos_mq153_from_root(root, snv_tree, snv_segments):
         if br is None:
             continue
 
-        markers.append({"br": br, "km_num": km_num, "lon": lon, "lat": lat})
+        marker = {"br": br, "km_num": km_num, "lon": lon, "lat": lat}
+        if tipo_hint:
+            marker["tipo_sigla_hint"] = tipo_hint
+        markers.append(marker)
 
     brs = sorted({mk["br"] for mk in markers})
     if markers and not used_br_hint and len(brs) > 1:

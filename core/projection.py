@@ -5,28 +5,52 @@ from shapely.geometry import Point
 from core.geometry import to_utm_point
 
 
-def project_markers_onto_line(markers, br_filter, eixo_line_utm, epsg, max_dist_m=2000):
+def _marker_matches_route_hint(marker, route_tipo_sigla):
+    marker_hint = marker.get("tipo_sigla_hint")
+    if not marker_hint or not route_tipo_sigla:
+        return True
+    return marker_hint == route_tipo_sigla
+
+
+def _route_distance_limit(candidates, max_dist_m, route_band_m):
+    near = [c for c in candidates if c["dist_to_eixo_m"] <= max_dist_m]
+    if not near:
+        return []
+
+    best_dist = min(c["dist_to_eixo_m"] for c in near)
+    adaptive_limit = min(max_dist_m, max(route_band_m, best_dist + route_band_m))
+    strict = [c for c in near if c["dist_to_eixo_m"] <= adaptive_limit]
+    return strict if len(strict) >= 2 else near
+
+
+def project_markers_onto_line(markers, br_filter, eixo_line_utm, epsg, max_dist_m=2000,
+                              route_tipo_sigla=None, route_band_m=150):
     """
     Projeta sobre `eixo_line_utm` (já em UTM, na zona `epsg`) os marcos do
     BR indicado, e ordena o resultado por posição ao longo do eixo.
 
-    Filtra marcos fisicamente distantes do eixo (>max_dist_m) para evitar
-    que marcos de outro trecho estadual da mesma BR contaminem o resultado
-    (ex: marcos GO projetados sobre eixo MG quando a BR reinicia o KM na
-    divisa).
+    Filtra marcos fisicamente distantes do eixo e, quando o KML traz pista
+    de ramo (ex: MQ_040_V ou MQ_040_EP), usa apenas o ramo compatível.
+
+    Depois do filtro amplo (`max_dist_m`), uma faixa adaptativa mantém os
+    marcos realmente aderentes ao eixo. Isso evita que eixos paralelos e
+    próximos, como subida/descida de serra, contaminem a interpolação.
 
     Retorna lista de {..., utm_pt, d_on_eixo}, ordenada por d_on_eixo.
     """
-    result = []
+    candidates = []
     for mk in markers:
         if mk["br"] != br_filter:
             continue
-        utm_pt = Point(*to_utm_point(mk["lon"], mk["lat"], epsg))
-        if eixo_line_utm.distance(utm_pt) > max_dist_m:
+        if not _marker_matches_route_hint(mk, route_tipo_sigla):
             continue
+        utm_pt = Point(*to_utm_point(mk["lon"], mk["lat"], epsg))
         entry = dict(mk)
         entry["utm_pt"]    = utm_pt
+        entry["dist_to_eixo_m"] = eixo_line_utm.distance(utm_pt)
         entry["d_on_eixo"] = eixo_line_utm.project(utm_pt)
-        result.append(entry)
+        candidates.append(entry)
+
+    result = _route_distance_limit(candidates, max_dist_m, route_band_m)
     result.sort(key=lambda x: x["d_on_eixo"])
     return result
