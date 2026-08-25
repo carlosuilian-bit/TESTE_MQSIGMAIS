@@ -9,7 +9,7 @@ from core.projection import project_markers_onto_line
 from core.snv import nearest_snv_segment
 from core.geometry import from_utm_line, from_utm_point, to_utm_line, to_utm_point, utm_epsg_for_lonlat
 
-_ZERO_MARKER_TOLERANCE_M = 1.0
+_MARKER_PROJECTION_TOLERANCE_M = 0.25
 
 
 def _pair_distance_score(a, b, click_utm_pt):
@@ -26,16 +26,33 @@ def _pair_distance_score(a, b, click_utm_pt):
 def _base_marker_for_pair(a, b, d_query):
     """Escolhe o marco-base respeitando viradas de numeracao no KM 0."""
     if a["km_num"] == 0 and b["km_num"] != 1:
-        if d_query <= a["d_on_eixo"] + _ZERO_MARKER_TOLERANCE_M:
+        if d_query <= a["d_on_eixo"] + _MARKER_PROJECTION_TOLERANCE_M:
             return a, -1
         return b, -1
     if b["km_num"] == 0 and a["km_num"] != 1:
-        if d_query >= b["d_on_eixo"] - _ZERO_MARKER_TOLERANCE_M:
+        if d_query >= b["d_on_eixo"] - _MARKER_PROJECTION_TOLERANCE_M:
             return b, 1
         return a, 1
     if a["km_num"] <= b["km_num"]:
         return a, 1
     return b, -1
+
+
+def _marker_at_projection(markers_sorted, d_query):
+    nearest = min(markers_sorted, key=lambda mk: abs(mk["d_on_eixo"] - d_query))
+    if abs(nearest["d_on_eixo"] - d_query) <= _MARKER_PROJECTION_TOLERANCE_M:
+        return nearest
+    return None
+
+
+def _outside_marker_range(markers_sorted, d_query):
+    first = markers_sorted[0]
+    last = markers_sorted[-1]
+    if d_query < first["d_on_eixo"]:
+        return first, first["d_on_eixo"] - d_query
+    if d_query > last["d_on_eixo"]:
+        return last, d_query - last["d_on_eixo"]
+    return None, None
 
 
 def _interpolate_km(markers_sorted, click_utm_pt, eixo_line_utm, epsg):
@@ -48,15 +65,27 @@ def _interpolate_km(markers_sorted, click_utm_pt, eixo_line_utm, epsg):
     700 m do KM 153 vira 153+700; um ponto a 1010 m vira 153+999. O teto
     evita que a metragem ultrapasse o formato valido de tres digitos.
 
+    Fora do intervalo coberto pelos marcos, usa o primeiro/ultimo marco
+    disponivel como base e mede a distancia ate a projecao no eixo.
+
     Retorna (km, metros, lon_projetado, lat_projetado).
     """
     d_query = eixo_line_utm.project(click_utm_pt)
     proj_pt = eixo_line_utm.interpolate(d_query)
+    plon, plat = from_utm_point(proj_pt.x, proj_pt.y, epsg)
 
     if len(markers_sorted) == 1:
         mk = markers_sorted[0]
-        plon, plat = from_utm_point(proj_pt.x, proj_pt.y, epsg)
         return mk["km_num"], 0, plon, plat
+
+    marker_hit = _marker_at_projection(markers_sorted, d_query)
+    if marker_hit is not None:
+        return marker_hit["km_num"], 0, plon, plat
+
+    edge_marker, edge_offset_m = _outside_marker_range(markers_sorted, d_query)
+    if edge_marker is not None:
+        metros = max(0, min(999, round(edge_offset_m)))
+        return edge_marker["km_num"], metros, plon, plat
 
     bracket_pairs = [
         i for i in range(len(markers_sorted) - 1)
@@ -79,7 +108,6 @@ def _interpolate_km(markers_sorted, click_utm_pt, eixo_line_utm, epsg):
     offset_m = (d_query - base["d_on_eixo"]) * direction
 
     metros = max(0, min(999, round(offset_m)))
-    plon, plat = from_utm_point(proj_pt.x, proj_pt.y, epsg)
     return km, metros, plon, plat
 
 
