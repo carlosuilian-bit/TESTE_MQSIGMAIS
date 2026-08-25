@@ -69,6 +69,13 @@ with st.sidebar:
     st.success(f"{len(snv_segments)} trechos carregados (principal + variantes)\nBRs: {brs_carregadas}")
     st.caption(f"Cache SNV: {SNV_CACHE_VERSION}")
 
+    st.header("Mapa")
+    ponto_radius = st.slider(
+        "Tamanho do ponto no mapa (px)",
+        min_value=2, max_value=20, value=5, step=1,
+        help="Tamanho fixo em pixels — não muda com o zoom do mapa.",
+    )
+
 st.subheader("Arquivos de entrada")
 col1, col2, col3 = st.columns(3)
 
@@ -248,7 +255,7 @@ if body:
                 get_position="position",
                 get_fill_color=COR_PONTO,
                 radius_units="pixels",
-                get_radius=5 if ponto_mapa is not None else 3,
+                get_radius=ponto_radius + 2 if ponto_mapa is not None else ponto_radius,
                 pickable=True,
             ))
             focus_coords.extend(p["position"] for p in pontos_data)
@@ -287,7 +294,7 @@ if body:
                     get_position=["longitude", "latitude"],
                     get_fill_color=[239, 68, 68],
                     radius_units="pixels",
-                    get_radius=3,
+                    get_radius=ponto_radius,
                     pickable=True,
                 )],
                 initial_view_state=pdk.ViewState(
