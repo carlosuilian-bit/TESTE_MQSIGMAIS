@@ -18,7 +18,7 @@ import pandas as pd
 import pydeck as pdk
 import streamlit as st
 
-from core.calc import calcular_pontos, flatten_resultados
+from core.calc import calcular_pontos, flatten_resultados, flatten_resultados_download
 from core.errors import CalcError
 from core.parsers_tabular import parse_pontos_file
 from core.snv import list_brs_in_kmz, load_snv
@@ -131,9 +131,10 @@ if calcular:
     df = pd.DataFrame(flatten_resultados(body))
     st.dataframe(df, use_container_width=True)
 
+    df_download = pd.DataFrame(flatten_resultados_download(body))
     st.download_button(
-        "Baixar resultados (CSV)",
-        data=df.to_csv(index=False).encode("utf-8"),
+        "Baixar Resultados (CSV)",
+        data=df_download.to_csv(index=False).encode("utf-8"),
         file_name="resultados_km.csv",
         mime="text/csv",
     )

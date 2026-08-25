@@ -345,3 +345,41 @@ def flatten_resultados(body: dict) -> list:
 
         linhas.append(row)
     return linhas
+
+
+def flatten_resultados_download(body: dict) -> list:
+    """
+    Gera linhas enxutas para o CSV, usando o melhor nivel de precisao disponivel.
+
+    Nivel 1: coordenadas + SNV.
+    Nivel 2: coordenadas + SNV + Marcos Quilometricos.
+    Nivel 3: coordenadas + Marcos Quilometricos + eixo enviado.
+    """
+    camadas = body.get("camadas_disponiveis", [])
+    if "eixo_mq" in camadas:
+        campo_resultado = "eixo_mq"
+    elif "snv_mq" in camadas:
+        campo_resultado = "snv_mq"
+    else:
+        campo_resultado = "snv"
+
+    linhas = []
+    for r in body.get("resultados", []):
+        row = {
+            "indice": r.get("indice"),
+            "lat": r.get("lat"),
+            "lon": r.get("lon"),
+        }
+
+        if "erro" in r:
+            row["km+m"] = f"[{r['erro']}]"
+        else:
+            camada = r.get(campo_resultado) or {}
+            row["km+m"] = (
+                camada.get("resultado", "-")
+                if "erro" not in camada
+                else f"[{camada['erro']}]"
+            )
+
+        linhas.append(row)
+    return linhas
