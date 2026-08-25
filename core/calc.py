@@ -9,6 +9,8 @@ from core.projection import project_markers_onto_line
 from core.snv import nearest_snv_segment
 from core.geometry import from_utm_line, from_utm_point, to_utm_line, to_utm_point, utm_epsg_for_lonlat
 
+_ZERO_MARKER_TOLERANCE_M = 1.0
+
 
 def _pair_distance_score(a, b, click_utm_pt):
     if click_utm_pt is None:
@@ -21,11 +23,15 @@ def _pair_distance_score(a, b, click_utm_pt):
     )
 
 
-def _base_marker_for_pair(a, b):
-    """Escolhe o marco-base; KM 0 so vale como base quando ligado ao KM 1."""
+def _base_marker_for_pair(a, b, d_query):
+    """Escolhe o marco-base respeitando viradas de numeracao no KM 0."""
     if a["km_num"] == 0 and b["km_num"] != 1:
+        if d_query <= a["d_on_eixo"] + _ZERO_MARKER_TOLERANCE_M:
+            return a, -1
         return b, -1
     if b["km_num"] == 0 and a["km_num"] != 1:
+        if d_query >= b["d_on_eixo"] - _ZERO_MARKER_TOLERANCE_M:
+            return b, 1
         return a, 1
     if a["km_num"] <= b["km_num"]:
         return a, 1
@@ -68,7 +74,7 @@ def _interpolate_km(markers_sorted, click_utm_pt, eixo_line_utm, epsg):
         idx = len(markers_sorted) - 2
 
     a, b = markers_sorted[idx], markers_sorted[idx + 1]
-    base, direction = _base_marker_for_pair(a, b)
+    base, direction = _base_marker_for_pair(a, b, d_query)
     km = base["km_num"]
     offset_m = (d_query - base["d_on_eixo"]) * direction
 
