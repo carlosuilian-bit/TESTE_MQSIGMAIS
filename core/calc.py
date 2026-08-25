@@ -205,7 +205,7 @@ def calcular_pontos(pontos, marcos_file=None, eixo_file=None, *,
     país, e um único eixo enviado pode atravessar a fronteira entre duas
     zonas UTM.
 
-    pontos:      lista de {lat, lon}
+    pontos:      lista de {lat, lon, id?}
     marcos_file: tupla (filename, bytes) opcional
     eixo_file:   tupla (filename, bytes) opcional — requer marcos_file
     Levanta CalcError em caso de entrada inválida.
@@ -240,17 +240,23 @@ def calcular_pontos(pontos, marcos_file=None, eixo_file=None, *,
 
     resultados = []
     for i, ponto in enumerate(pontos):
+        ponto_id = ponto.get("id")
         try:
             lat = float(ponto["lat"])
             lon = float(ponto["lon"])
         except (KeyError, ValueError, TypeError):
-            resultados.append({"indice": i, "erro": "lat/lon inválidos ou ausentes"})
+            erro = {"indice": i, "erro": "lat/lon inválidos ou ausentes"}
+            if ponto_id not in (None, ""):
+                erro["id"] = ponto_id
+            resultados.append(erro)
             continue
 
         epsg      = utm_epsg_for_lonlat(lon, lat)
         click_utm = Point(*to_utm_point(lon, lat, epsg))
 
         res = {"indice": i, "lat": lat, "lon": lon, "utm_epsg": epsg}
+        if ponto_id not in (None, ""):
+            res["id"] = ponto_id
 
         r1 = _calc_camada1(lon, lat, click_utm, epsg, snv_tree, snv_segments, zc.seg_utm_cache)
         res["snv"] = r1 or {"erro": "SNV não disponível"}
@@ -319,7 +325,8 @@ def flatten_resultados(body: dict) -> list:
     camadas = body.get("camadas_disponiveis", [])
     linhas  = []
     for r in body.get("resultados", []):
-        row = {"indice": r.get("indice"), "lat": r.get("lat"), "lon": r.get("lon"),
+        row = {"indice": r.get("indice"), "id": r.get("id"),
+               "lat": r.get("lat"), "lon": r.get("lon"),
                "utm_epsg": r.get("utm_epsg")}
 
         if "erro" in r:
@@ -367,6 +374,7 @@ def flatten_resultados_download(body: dict) -> list:
     for r in body.get("resultados", []):
         row = {
             "indice": r.get("indice"),
+            "id": r.get("id"),
             "lat": r.get("lat"),
             "lon": r.get("lon"),
         }

@@ -76,7 +76,10 @@ with col1:
     pontos_upload = st.file_uploader(
         "Pontos a Verificar (obrigatório)",
         type=["txt", "csv", "json"],
-        help="Lat/Lon por linha ('Latitude; Longitude' ou 'Latitude, Longitude') ou JSON.",
+        help=(
+            "Lat/Lon por linha ('Latitude; Longitude' ou 'Latitude, Longitude'), "
+            "ou ID;Latitude, Longitude. JSON tambem e aceito."
+        ),
     )
 
 with col2:

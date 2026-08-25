@@ -9,12 +9,13 @@ from core.snv import resolve_br_uf_for_point
 _LAT_KEYS = ("lat", "latitude")
 _LON_KEYS = ("lon", "lng", "longitude")
 _KM_KEYS  = ("km", "km_num", "quilometro", "kmnum")
+_ID_KEYS  = ("id", "identificador", "codigo", "chave")
 
 
 def _split_row(line: str) -> list:
     """Detecta ';' como separador se presente, senão ','."""
     sep = ";" if ";" in line else ","
-    return [p.strip() for p in line.split(sep)]
+    return [p.strip().strip('"').strip("'") for p in line.split(sep)]
 
 
 def _first_key(d: dict, keys, cast=float):
@@ -27,6 +28,59 @@ def _first_key(d: dict, keys, cast=float):
     return None
 
 
+def _ponto_dict(lat, lon, ponto_id=None):
+    ponto = {"lat": lat, "lon": lon}
+    if ponto_id not in (None, ""):
+        ponto["id"] = str(ponto_id)
+    return ponto
+
+
+def _float_or_none(value):
+    try:
+        return float(str(value).strip().strip('"').strip("'"))
+    except (TypeError, ValueError):
+        return None
+
+
+def _parse_lat_lon_text(value):
+    text = str(value).strip().strip('"').strip("'")
+    for sep in (",", ";"):
+        if sep not in text:
+            continue
+        partes = [p.strip().strip('"').strip("'") for p in text.split(sep)]
+        if len(partes) < 2:
+            continue
+        lat = _float_or_none(partes[0])
+        lon = _float_or_none(partes[1])
+        if lat is not None and lon is not None:
+            return lat, lon
+    return None
+
+
+def _parse_ponto_parts(partes):
+    if len(partes) < 2:
+        return None
+
+    lat = _float_or_none(partes[0])
+    lon = _float_or_none(partes[1])
+    if lat is not None and lon is not None:
+        return _ponto_dict(lat, lon)
+
+    ponto_id = partes[0]
+    if len(partes) >= 3:
+        lat = _float_or_none(partes[1])
+        lon = _float_or_none(partes[2])
+        if lat is not None and lon is not None:
+            return _ponto_dict(lat, lon, ponto_id)
+
+    coords = _parse_lat_lon_text(partes[1])
+    if coords is not None:
+        lat, lon = coords
+        return _ponto_dict(lat, lon, ponto_id)
+
+    return None
+
+
 # ── Pontos a verificar (lat, lon) ──────────────────────────────────────────
 
 def parse_pontos_txt_csv(text: str) -> list:
@@ -35,13 +89,9 @@ def parse_pontos_txt_csv(text: str) -> list:
         linha = linha.strip()
         if not linha or linha.startswith("#"):
             continue
-        partes = _split_row(linha)
-        if len(partes) < 2:
-            continue
-        try:
-            pontos.append({"lat": float(partes[0]), "lon": float(partes[1])})
-        except ValueError:
-            continue
+        ponto = _parse_ponto_parts(_split_row(linha))
+        if ponto:
+            pontos.append(ponto)
     return pontos
 
 
@@ -56,18 +106,22 @@ def parse_pontos_json(data: bytes) -> list:
 
     pontos = []
     for item in raw:
+        ponto_id = None
         if isinstance(item, dict):
             lat = _first_key(item, _LAT_KEYS)
             lon = _first_key(item, _LON_KEYS)
+            ponto_id = _first_key(item, _ID_KEYS, cast=str)
         elif isinstance(item, (list, tuple)) and len(item) >= 2:
-            try:
-                lat, lon = float(item[0]), float(item[1])
-            except (TypeError, ValueError):
-                lat = lon = None
+            lat = _float_or_none(item[0])
+            lon = _float_or_none(item[1])
+            if (lat is None or lon is None) and len(item) >= 3:
+                ponto_id = item[0]
+                lat = _float_or_none(item[1])
+                lon = _float_or_none(item[2])
         else:
             lat = lon = None
         if lat is not None and lon is not None:
-            pontos.append({"lat": lat, "lon": lon})
+            pontos.append(_ponto_dict(lat, lon, ponto_id))
     return pontos
 
 
