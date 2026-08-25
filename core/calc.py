@@ -21,6 +21,17 @@ def _pair_distance_score(a, b, click_utm_pt):
     )
 
 
+def _base_marker_for_pair(a, b):
+    """Escolhe o marco-base; KM 0 so vale como base quando ligado ao KM 1."""
+    if a["km_num"] == 0 and b["km_num"] != 1:
+        return b, -1
+    if b["km_num"] == 0 and a["km_num"] != 1:
+        return a, 1
+    if a["km_num"] <= b["km_num"]:
+        return a, 1
+    return b, -1
+
+
 def _interpolate_km(markers_sorted, d_query, click_utm_pt=None):
     """
     Calcula a quilometragem usando a distancia fisica no eixo a partir do
@@ -51,12 +62,9 @@ def _interpolate_km(markers_sorted, d_query, click_utm_pt=None):
         idx = len(markers_sorted) - 2
 
     a, b = markers_sorted[idx], markers_sorted[idx + 1]
-    if a["km_num"] <= b["km_num"]:
-        km = a["km_num"]
-        offset_m = d_query - a["d_on_eixo"]
-    else:
-        km = b["km_num"]
-        offset_m = b["d_on_eixo"] - d_query
+    base, direction = _base_marker_for_pair(a, b)
+    km = base["km_num"]
+    offset_m = (d_query - base["d_on_eixo"]) * direction
 
     metros = max(0, min(999, round(offset_m)))
     return km, metros
