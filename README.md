@@ -69,6 +69,10 @@ filtro vazio carrega o Brasil inteiro.
 - **KML formato 2** (ex: `MQ_153.kml`): Placemarks Point com atributo
   `DESC` no padrão `km-NNN` (sem BR explícita — a BR é resolvida
   automaticamente projetando o marco sobre a malha SNV carregada).
+- **KML/KMZ adicional**: tambem aceita `DESC` numerico puro (`71`), nome do
+  Placemark numerico puro (`71`) e pista de BR em pasta/Document no padrao
+  `MQ_040` ou `BR-040`. Sem pista de BR, a BR e resolvida pela malha SNV
+  carregada; selecione a BR correta no filtro SNV.
 - **TXT/CSV**: uma linha por marco, `Latitude;Longitude;KM` ou
   `Latitude,Longitude,KM` (BR também resolvida via SNV).
 - **JSON**: lista de objetos `{"lat":..., "lon":..., "km":...}` ou lista de

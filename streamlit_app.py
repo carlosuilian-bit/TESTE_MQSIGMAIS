@@ -83,6 +83,11 @@ with col2:
         help="KML/KMZ com os marcos físicos, ou TXT/CSV/JSON com Latitude, Longitude e KM.",
     )
 
+    st.caption(
+        "KML/KMZ: aceita BR-NNN KM-MMM, DESC km-NNN/NNN ou nome numerico. "
+        "Sem BR explicita, selecione a BR correta no filtro SNV."
+    )
+
 with col3:
     eixo_upload = st.file_uploader(
         "Eixo da rodovia (opcional — requer Marcos)",
