@@ -75,6 +75,16 @@ with st.sidebar:
         min_value=2, max_value=20, value=5, step=1,
         help="Tamanho fixo em pixels — não muda com o zoom do mapa.",
     )
+    mostrar_projecao = st.checkbox(
+        "Mostrar linha de projeção perpendicular",
+        value=True,
+        help=(
+            "Linha entre cada ponto consultado e o ponto do eixo usado para "
+            "calcular sua quilometragem — útil para conferir a correspondência. "
+            "Fica sempre visível (o pydeck do Streamlit não avisa o Python "
+            "quando o mouse passa sobre um ponto do mapa)."
+        ),
+    )
 
 st.subheader("Arquivos de entrada")
 col1, col2, col3 = st.columns(3)
@@ -173,16 +183,17 @@ if body:
         st.subheader("Mapa de diagnóstico — eixo SNV, eixo enviado e marcos")
         st.caption(
             "🔵 Eixo SNV (malha do DNIT) · 🟠 Eixo enviado · 🟢 Marcos quilométricos · "
-            "🔴 Pontos consultados. Divergência grande entre SNV+MQ e Eixo+MQ costuma "
-            "aparecer aqui como um desvio visível entre a linha azul e a laranja perto "
-            "dos pontos vermelhos, ou como marcos verdes mais próximos de uma linha "
-            "do que da outra."
+            "🔴 Pontos consultados · 🟡 Projeção perpendicular no eixo. Divergência "
+            "grande entre SNV+MQ e Eixo+MQ costuma aparecer aqui como um desvio "
+            "visível entre a linha azul e a laranja perto dos pontos vermelhos, ou "
+            "como marcos verdes mais próximos de uma linha do que da outra."
         )
 
         COR_EIXO_SNV = [30, 144, 255]
         COR_EIXO_USR = [255, 140, 0]
         COR_MARCO    = [34, 197, 94]
         COR_PONTO    = [239, 68, 68]
+        COR_PROJECAO = [234, 179, 8]
 
         layers = []
         focus_coords = []  # usados para enquadrar o mapa — só a área de interesse do usuário
@@ -260,6 +271,26 @@ if body:
             ))
             focus_coords.extend(p["position"] for p in pontos_data)
 
+            if mostrar_projecao:
+                indices_no_mapa = {p["indice"] for p in pontos_data}
+                projecao_data = [
+                    {"path": [[row["lon"], row["lat"]], [row["proj_lon"], row["proj_lat"]]],
+                     "label": f"Projeção perpendicular — Ponto #{row['indice']}"}
+                    for row in linhas_resultado
+                    if row["indice"] in indices_no_mapa
+                    and row.get("proj_lat") is not None and row.get("proj_lon") is not None
+                ]
+                if projecao_data:
+                    layers.append(pdk.Layer(
+                        "PathLayer",
+                        data=projecao_data,
+                        get_path="path",
+                        get_color=COR_PROJECAO,
+                        get_width=2,
+                        width_min_pixels=1,
+                        pickable=True,
+                    ))
+
         # Fallback: se não há marcos/eixo/pontos válidos (não deveria ocorrer, já
         # que pontos são obrigatórios), enquadra pelo eixo SNV mesmo.
         if not focus_coords:
@@ -287,16 +318,33 @@ if body:
         mapa_df = mapa_base[["lat", "lon"]].dropna().rename(columns={"lat": "latitude", "lon": "longitude"})
         if not mapa_df.empty:
             st.subheader("Mapa dos pontos consultados")
+            mapa_layers = [pdk.Layer(
+                "ScatterplotLayer",
+                data=mapa_df,
+                get_position=["longitude", "latitude"],
+                get_fill_color=[239, 68, 68],
+                radius_units='"pixels"',
+                get_radius=ponto_radius,
+                pickable=True,
+            )]
+            if mostrar_projecao and {"proj_lat", "proj_lon"}.issubset(mapa_base.columns):
+                projecao_base = mapa_base[["lat", "lon", "proj_lat", "proj_lon"]].dropna()
+                if not projecao_base.empty:
+                    projecao_data = [
+                        {"path": [[row["lon"], row["lat"]], [row["proj_lon"], row["proj_lat"]]]}
+                        for _, row in projecao_base.iterrows()
+                    ]
+                    mapa_layers.append(pdk.Layer(
+                        "PathLayer",
+                        data=projecao_data,
+                        get_path="path",
+                        get_color=[234, 179, 8],
+                        get_width=2,
+                        width_min_pixels=1,
+                        pickable=False,
+                    ))
             st.pydeck_chart(pdk.Deck(
-                layers=[pdk.Layer(
-                    "ScatterplotLayer",
-                    data=mapa_df,
-                    get_position=["longitude", "latitude"],
-                    get_fill_color=[239, 68, 68],
-                    radius_units='"pixels"',
-                    get_radius=ponto_radius,
-                    pickable=True,
-                )],
+                layers=mapa_layers,
                 initial_view_state=pdk.ViewState(
                     latitude=mapa_df["latitude"].mean(),
                     longitude=mapa_df["longitude"].mean(),

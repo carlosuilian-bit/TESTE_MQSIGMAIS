@@ -1,6 +1,7 @@
 """Lógica de cálculo por camada + orquestrador principal (sem dependência de Flask)."""
 
 from shapely.geometry import Point
+from shapely.ops import substring
 
 from core.errors import CalcError
 from core.parsers_kml import kml_root_from_bytes, parse_eixo_from_root
@@ -32,42 +33,68 @@ def _base_marker_for_pair(a, b):
     return b, -1
 
 
-def _interpolate_km(markers_sorted, d_query, click_utm_pt=None):
+def _local_projection(markers_sorted, idx, click_utm_pt, eixo_line_utm):
     """
-    Calcula a quilometragem usando a distancia fisica no eixo a partir do
-    marco-base do par que envolve d_query.
+    Projeta click_utm_pt perpendicularmente sobre o trecho do eixo entre os
+    marcos markers_sorted[idx] e markers_sorted[idx+1] apenas (não sobre o
+    eixo inteiro). Retorna (local_d, comprimento_do_trecho, ponto_utm_projetado)
+    ou None se o trecho for degenerado.
+    """
+    a, b = markers_sorted[idx], markers_sorted[idx + 1]
+    d_a, d_b = a["d_on_eixo"], b["d_on_eixo"]
+    if d_b <= d_a:
+        return None
+    trecho = substring(eixo_line_utm, d_a, d_b)
+    if trecho.is_empty or trecho.length == 0:
+        return None
+    local_d = trecho.project(click_utm_pt)
+    return local_d, trecho.length, trecho.interpolate(local_d)
+
+
+def _interpolate_km(markers_sorted, click_utm_pt, eixo_line_utm, epsg):
+    """
+    Calcula a quilometragem escolhendo o par de marcos vizinhos fisicamente
+    mais próximo do ponto (soma das distâncias reais aos dois marcos) e
+    projetando o ponto perpendicularmente apenas sobre o trecho do eixo
+    entre esses dois marcos — nunca sobre o eixo inteiro.
+
+    Usar a projeção do eixo inteiro (ou escolher o par pela distância
+    perpendicular a um trecho longo) é arriscado quando a rodovia faz uma
+    curva fechada ou um retorno perto de si mesma (ex: trevo, alça de
+    acesso): o trecho fisicamente distante em termos de km pode passar
+    perto do ponto e "roubar" a escolha, fazendo o cálculo saltar para uma
+    quilometragem completamente errada. Escolher o par pelos marcos mais
+    próximos (não pelo trecho) evita esse salto.
 
     Se os marcos KM 153 e KM 154 estao separados por 1500 m, um ponto a
     700 m do KM 153 vira 153+700; um ponto a 1010 m vira 153+999. O teto
     evita que a metragem ultrapasse o formato valido de tres digitos.
 
-    Retorna (km, metros).
+    Retorna (km, metros, lon_projetado, lat_projetado).
     """
     if len(markers_sorted) == 1:
-        return markers_sorted[0]["km_num"], 0
+        mk = markers_sorted[0]
+        return mk["km_num"], 0, mk["lon"], mk["lat"]
 
-    bracket_pairs = [
-        i for i in range(len(markers_sorted) - 1)
-        if markers_sorted[i]["d_on_eixo"] <= d_query <= markers_sorted[i + 1]["d_on_eixo"]
-    ]
-
-    if bracket_pairs:
-        idx = min(
-            bracket_pairs,
-            key=lambda i: _pair_distance_score(markers_sorted[i], markers_sorted[i + 1], click_utm_pt),
-        )
-    elif d_query < markers_sorted[0]["d_on_eixo"]:
-        idx = 0
-    else:
-        idx = len(markers_sorted) - 2
-
+    idx = min(
+        range(len(markers_sorted) - 1),
+        key=lambda i: _pair_distance_score(markers_sorted[i], markers_sorted[i + 1], click_utm_pt),
+    )
     a, b = markers_sorted[idx], markers_sorted[idx + 1]
     base, direction = _base_marker_for_pair(a, b)
-    km = base["km_num"]
-    offset_m = (d_query - base["d_on_eixo"]) * direction
+
+    proj = _local_projection(markers_sorted, idx, click_utm_pt, eixo_line_utm)
+    if proj is None:
+        # Trecho degenerado (marcos na mesma posição do eixo): usa o
+        # marco-base diretamente, sem interpolação.
+        return base["km_num"], 0, base["lon"], base["lat"]
+
+    local_d, comprimento, proj_pt = proj
+    offset_m = local_d if base is a else (comprimento - local_d)
 
     metros = max(0, min(999, round(offset_m)))
-    return km, metros
+    plon, plat = from_utm_point(proj_pt.x, proj_pt.y, epsg)
+    return base["km_num"], metros, plon, plat
 
 
 def _calc_camada1(lon, lat, click_utm_pt, epsg, snv_tree, snv_segments, seg_utm_cache):
@@ -107,34 +134,36 @@ def _calc_camada1(lon, lat, click_utm_pt, epsg, snv_tree, snv_segments, seg_utm_
     }
 
 
-def _calc_camada2(click_utm_pt, br, uf, eixo_line_utm, markers_proj):
+def _calc_camada2(click_utm_pt, br, uf, eixo_line_utm, markers_proj, epsg):
     """Camada 2 — SNV eixo + Marcos do cliente. BR/UF vêm do resultado da Camada 1."""
     if eixo_line_utm is None or not markers_proj:
         return None
 
-    d_query    = eixo_line_utm.project(click_utm_pt)
-    km, metros = _interpolate_km(markers_proj, d_query, click_utm_pt)
+    km, metros, plon, plat = _interpolate_km(markers_proj, click_utm_pt, eixo_line_utm, epsg)
     return {
         "resultado": f"{km}+{metros:03d}",
         "km":        km,
         "metros":    metros,
         "br":        br,
         "uf":        uf,
+        "proj_lat":  round(plat, 7),
+        "proj_lon":  round(plon, 7),
     }
 
 
-def _calc_camada3(click_utm_pt, br, eixo_line_utm, markers_proj):
+def _calc_camada3(click_utm_pt, br, eixo_line_utm, markers_proj, epsg):
     """Camada 3 — Eixo do cliente + Marcos do cliente. BR vem do resultado da Camada 1."""
     if eixo_line_utm is None or not markers_proj:
         return None
 
-    d_query    = eixo_line_utm.project(click_utm_pt)
-    km, metros = _interpolate_km(markers_proj, d_query, click_utm_pt)
+    km, metros, plon, plat = _interpolate_km(markers_proj, click_utm_pt, eixo_line_utm, epsg)
     return {
         "resultado": f"{km}+{metros:03d}",
         "km":        km,
         "metros":    metros,
         "br":        br,
+        "proj_lat":  round(plat, 7),
+        "proj_lon":  round(plon, 7),
     }
 
 
@@ -274,12 +303,12 @@ def calcular_pontos(pontos, marcos_file=None, eixo_file=None, *,
 
         if "snv_mq" in camadas and br and uf:
             eixo_utm, markers_proj = zc.snv_mq_markers(br, uf, epsg, r1.get("snv_eixo_key"))
-            r2 = _calc_camada2(click_utm, br, uf, eixo_utm, markers_proj)
+            r2 = _calc_camada2(click_utm, br, uf, eixo_utm, markers_proj, epsg)
             res["snv_mq"] = r2 or {"erro": f"Sem marcos para BR-{br}/{uf}"}
 
         if "eixo_mq" in camadas and br:
             eixo_utm, markers_proj = zc.eixo_mq_markers(br, epsg)
-            r3 = _calc_camada3(click_utm, br, eixo_utm, markers_proj)
+            r3 = _calc_camada3(click_utm, br, eixo_utm, markers_proj, epsg)
             res["eixo_mq"] = r3 or {"erro": f"Sem marcos/eixo para BR-{br}"}
 
         resultados.append(res)
@@ -358,8 +387,23 @@ def flatten_resultados(body: dict) -> list:
             emq = r.get("eixo_mq") or {}
             row["eixo_mq_resultado"] = emq.get("resultado", "-") if "erro" not in emq else f"[{emq['erro']}]"
 
+        row["proj_lat"], row["proj_lon"] = _melhor_projecao(r, camadas)
+
         linhas.append(row)
     return linhas
+
+
+def _melhor_projecao(r: dict, camadas: list):
+    """Ponto (lat, lon) projetado perpendicularmente no eixo, no melhor nível
+    de precisão disponível (eixo_mq > snv_mq > snv) — usado para desenhar a
+    linha de projeção perpendicular no mapa de diagnóstico."""
+    for campo in ("eixo_mq", "snv_mq", "snv"):
+        if campo != "snv" and campo not in camadas:
+            continue
+        camada = r.get(campo) or {}
+        if "erro" not in camada and camada.get("proj_lat") is not None:
+            return camada["proj_lat"], camada["proj_lon"]
+    return None, None
 
 
 def flatten_resultados_download(body: dict) -> list:
