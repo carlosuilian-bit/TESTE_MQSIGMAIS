@@ -137,7 +137,20 @@ if body:
 
     linhas_resultado = flatten_resultados(body)
     df = pd.DataFrame(linhas_resultado)
-    st.dataframe(df, use_container_width=True)
+    tabela_evento = st.dataframe(
+        df,
+        use_container_width=True,
+        on_select="rerun",
+        selection_mode="single-row",
+        key="tabela_resultados",
+    )
+
+    ponto_mapa = None
+    linhas_selecionadas = tabela_evento.selection.rows
+    if linhas_selecionadas and linhas_selecionadas[0] < len(df):
+        row = df.iloc[linhas_selecionadas[0]]
+        if pd.notna(row.get("lat")) and pd.notna(row.get("lon")):
+            ponto_mapa = row.get("indice")
 
     df_download = pd.DataFrame(flatten_resultados_download(body))
     st.download_button(
@@ -146,28 +159,6 @@ if body:
         file_name="resultados_km.csv",
         mime="text/csv",
     )
-
-    linhas_com_coord = [
-        row for row in linhas_resultado
-        if row.get("lat") is not None and row.get("lon") is not None
-    ]
-    ponto_mapa = None
-    if linhas_com_coord:
-        ponto_labels = {"__todos__": "Todos os pontos"}
-        ponto_options = ["__todos__"]
-        for row in linhas_com_coord:
-            indice = row.get("indice")
-            km = row.get("eixo_mq_resultado") or row.get("snv_mq_resultado") or row.get("snv_resultado") or "-"
-            id_txt = f" | {row['id']}" if row.get("id") else ""
-            ponto_options.append(indice)
-            ponto_labels[indice] = f"#{indice}{id_txt} | {km}"
-
-        ponto_escolhido = st.selectbox(
-            "Filtrar ponto no mapa",
-            options=ponto_options,
-            format_func=lambda value: ponto_labels.get(value, str(value)),
-        )
-        ponto_mapa = None if ponto_escolhido == "__todos__" else ponto_escolhido
 
     debug = body.get("debug", {})
 
