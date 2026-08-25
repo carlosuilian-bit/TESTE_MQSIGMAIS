@@ -143,10 +143,13 @@ def parse_pontos_file(filename: str, data: bytes) -> list:
 # ── Marcos quilométricos (lat, lon, km) ────────────────────────────────────
 
 def _marker_from_latlonkm(lat, lon, km_num, snv_tree, snv_segments):
-    br, _uf = resolve_br_uf_for_point(lon, lat, snv_tree, snv_segments)
+    br, uf = resolve_br_uf_for_point(lon, lat, snv_tree, snv_segments)
     if br is None:
         return None
-    return {"br": br, "km_num": int(km_num), "lon": lon, "lat": lat}
+    marker = {"br": br, "km_num": int(km_num), "lon": lon, "lat": lat}
+    if uf:
+        marker["uf"] = uf
+    return marker
 
 
 def parse_marcos_txt_csv(text: str, snv_tree, snv_segments) -> list:

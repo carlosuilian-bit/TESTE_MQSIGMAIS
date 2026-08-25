@@ -79,11 +79,16 @@ with st.sidebar:
         "Mostrar linha de projeção perpendicular",
         value=True,
         help=(
-            "Linha entre cada ponto consultado e o ponto do eixo usado para "
+            "Linha entre cada ponto/marco e o ponto do eixo usado para "
             "calcular sua quilometragem — útil para conferir a correspondência. "
             "Fica sempre visível (o pydeck do Streamlit não avisa o Python "
             "quando o mouse passa sobre um ponto do mapa)."
         ),
+    )
+    linha_width = st.slider(
+        "Espessura da linha de projeção (px)",
+        min_value=1, max_value=10, value=2, step=1,
+        help="Tamanho fixo em pixels — não muda com o zoom do mapa.",
     )
 
 st.subheader("Arquivos de entrada")
@@ -243,6 +248,24 @@ if body:
             if ponto_mapa is None:
                 focus_coords.extend(m["position"] for m in marcos_data)
 
+            if mostrar_projecao:
+                marcos_projecao_data = [
+                    {"path": [[m["lon"], m["lat"]], [m["proj_lon"], m["proj_lat"]]],
+                     "label": f"Projeção perpendicular — Marco KM {m['km_num']} (BR-{m['br']})"}
+                    for m in debug["marcos"]
+                    if m.get("proj_lat") is not None and m.get("proj_lon") is not None
+                ]
+                if marcos_projecao_data:
+                    layers.append(pdk.Layer(
+                        "PathLayer",
+                        data=marcos_projecao_data,
+                        get_path="path",
+                        get_color=COR_MARCO,
+                        width_units='"pixels"',
+                        get_width=linha_width,
+                        pickable=True,
+                    ))
+
         pontos_data = [
             {"indice": row["indice"],
              "position": [row["lon"], row["lat"]],
@@ -286,8 +309,8 @@ if body:
                         data=projecao_data,
                         get_path="path",
                         get_color=COR_PROJECAO,
-                        get_width=2,
-                        width_min_pixels=1,
+                        width_units='"pixels"',
+                        get_width=linha_width,
                         pickable=True,
                     ))
 
@@ -339,8 +362,8 @@ if body:
                         data=projecao_data,
                         get_path="path",
                         get_color=[234, 179, 8],
-                        get_width=2,
-                        width_min_pixels=1,
+                        width_units='"pixels"',
+                        get_width=linha_width,
                         pickable=False,
                     ))
             st.pydeck_chart(pdk.Deck(

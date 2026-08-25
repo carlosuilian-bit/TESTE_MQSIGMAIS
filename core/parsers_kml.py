@@ -96,6 +96,19 @@ def _lonlat_from_placemark(pm):
     return lon, lat
 
 
+def _uf_from_snv(lon, lat, snv_tree, snv_segments, max_dist_m=2000):
+    """
+    Resolve a UF do marco projetando-o sobre a malha SNV. Usado mesmo quando a
+    BR vem de um hint explicito (BR-NNN/MQ_NNN), pois o hint nao informa UF —
+    e sem UF, marcos de estados vizinhos (com numeracao de km independente)
+    podem se misturar perto da divisa (ver project_markers_onto_line).
+    """
+    nearest = nearest_snv_segment(lon, lat, snv_tree, snv_segments)
+    if nearest is None or nearest["dist_m"] > max_dist_m:
+        return None
+    return nearest["seg"]["uf"]
+
+
 def _br_from_hint_or_snv(lon, lat, br_hint, snv_tree, snv_segments, max_dist_m=2000):
     if br_hint:
         return br_hint
@@ -106,10 +119,10 @@ def _br_from_hint_or_snv(lon, lat, br_hint, snv_tree, snv_segments, max_dist_m=2
     return nearest["seg"]["br"]
 
 
-def parse_marcos_from_root(root):
+def parse_marcos_from_root(root, snv_tree=None, snv_segments=None):
     """
     Formato (a): Placemarks Point com nome "BR-NNN KM-MMM".
-    Retorna lista de {br, km_num, lon, lat}.
+    Retorna lista de {br, km_num, lon, lat, uf?}.
     """
     markers = []
     for pm in root.findall(".//kml:Placemark", NS):
@@ -126,7 +139,12 @@ def parse_marcos_from_root(root):
             continue
         lon, lat = lonlat
 
-        markers.append({"br": br, "km_num": km_num, "lon": lon, "lat": lat})
+        marker = {"br": br, "km_num": km_num, "lon": lon, "lat": lat}
+        if snv_tree is not None and snv_segments is not None:
+            uf = _uf_from_snv(lon, lat, snv_tree, snv_segments)
+            if uf:
+                marker["uf"] = uf
+        markers.append(marker)
     return markers
 
 
@@ -167,6 +185,9 @@ def parse_marcos_mq153_from_root(root, snv_tree, snv_segments):
             continue
 
         marker = {"br": br, "km_num": km_num, "lon": lon, "lat": lat}
+        uf = _uf_from_snv(lon, lat, snv_tree, snv_segments)
+        if uf:
+            marker["uf"] = uf
         if tipo_hint:
             marker["tipo_sigla_hint"] = tipo_hint
         markers.append(marker)
@@ -185,7 +206,7 @@ def parse_marcos_mq153_from_root(root, snv_tree, snv_segments):
 
 def parse_marcos_kml(root, snv_tree, snv_segments):
     """Dispatch entre os formatos (a) e (b) de KML de marcos."""
-    markers = parse_marcos_from_root(root)
+    markers = parse_marcos_from_root(root, snv_tree, snv_segments)
     if not markers:
         markers = parse_marcos_mq153_from_root(root, snv_tree, snv_segments)
     if not markers:

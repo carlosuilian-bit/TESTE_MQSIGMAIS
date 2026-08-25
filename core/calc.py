@@ -22,15 +22,38 @@ def _pair_distance_score(a, b, click_utm_pt):
     )
 
 
-def _base_marker_for_pair(a, b):
-    """Escolhe o marco-base; KM 0 so vale como base quando ligado ao KM 1."""
-    if a["km_num"] == 0 and b["km_num"] != 1:
-        return b, -1
-    if b["km_num"] == 0 and a["km_num"] != 1:
-        return a, 1
-    if a["km_num"] <= b["km_num"]:
-        return a, 1
-    return b, -1
+def _pair_is_discontinuous(a, b):
+    """
+    Detecta um salto de numeração entre os dois marcos do par (ex: KM 831
+    seguido de KM 0 na divisa de UF, ou o fim de um trevo/alça voltando pro
+    KM 0) — casos em que "menor km = base, soma metros pra frente" não faz
+    sentido, porque não existe um trecho contínuo de 0 a 999m entre eles.
+
+    Marcos reais ficam em torno de 1000m um do outro; um salto grande de km
+    (>1) cuja distância física real é muito menor do que esse salto sugere
+    (< 200m por unidade de km) indica reinício de numeração, não apenas
+    marcos espaçados/faltando no meio.
+    """
+    delta_km = abs(a["km_num"] - b["km_num"])
+    if delta_km <= 1:
+        return False
+    dist_ab = a["utm_pt"].distance(b["utm_pt"])
+    return dist_ab < delta_km * 200
+
+
+def _base_marker_for_pair(a, b, click_utm_pt):
+    """
+    Escolhe o marco-base do par. Caso normal (numeração contínua): usa
+    sempre o menor km como base, contando metros pra frente (convenção
+    padrão de quilometragem). Caso haja um salto de numeração entre os
+    dois, não existe "menor km" significativo — usa o marco fisicamente
+    mais próximo do ponto consultado como referência.
+    """
+    if _pair_is_discontinuous(a, b):
+        da = a["utm_pt"].distance(click_utm_pt)
+        db = b["utm_pt"].distance(click_utm_pt)
+        return a if da <= db else b
+    return a if a["km_num"] <= b["km_num"] else b
 
 
 def _local_projection(markers_sorted, idx, click_utm_pt, eixo_line_utm):
@@ -81,7 +104,7 @@ def _interpolate_km(markers_sorted, click_utm_pt, eixo_line_utm, epsg):
         key=lambda i: _pair_distance_score(markers_sorted[i], markers_sorted[i + 1], click_utm_pt),
     )
     a, b = markers_sorted[idx], markers_sorted[idx + 1]
-    base, direction = _base_marker_for_pair(a, b)
+    base = _base_marker_for_pair(a, b, click_utm_pt)
 
     proj = _local_projection(markers_sorted, idx, click_utm_pt, eixo_line_utm)
     if proj is None:
@@ -210,6 +233,7 @@ class _ZoneCache:
                     eixo_line_utm,
                     epsg,
                     route_tipo_sigla=eixo_info.get("tipo_sigla") if eixo_info else None,
+                    uf_filter=uf,
                 )
                 if eixo_line_utm is not None else []
             )
@@ -338,16 +362,37 @@ def _build_debug_geometrias(resultados, session_marcos, session_eixo_lonlat, zc)
     }
     if brs_uf_epsg_usados:
         debug["eixo_snv"] = {}
+        debug["marcos"] = []
+        marcos_vistos = set()
         for br, uf, epsg, eixo_key in sorted(brs_uf_epsg_usados):
-            eixo_line_utm, _ = zc.snv_mq_markers(br, uf, epsg, eixo_key)
+            eixo_line_utm, markers_proj = zc.snv_mq_markers(br, uf, epsg, eixo_key)
             if eixo_line_utm is not None:
                 debug["eixo_snv"].setdefault(eixo_key or f"{br}/{uf}",
                                              from_utm_line(eixo_line_utm, epsg))
+            for mk in markers_proj:
+                chave = (mk["br"], mk["km_num"], round(mk["lat"], 7), round(mk["lon"], 7))
+                if chave in marcos_vistos:
+                    continue
+                marcos_vistos.add(chave)
+                proj_pt = mk.get("proj_pt_utm")
+                plon, plat = (from_utm_point(proj_pt.x, proj_pt.y, epsg)
+                              if proj_pt is not None else (None, None))
+                debug["marcos"].append({
+                    "br": mk["br"], "km_num": mk["km_num"],
+                    "lat": round(mk["lat"], 7), "lon": round(mk["lon"], 7),
+                    "proj_lat": round(plat, 7) if plat is not None else None,
+                    "proj_lon": round(plon, 7) if plon is not None else None,
+                })
+        if not debug["marcos"]:
+            del debug["marcos"]
 
-    if session_marcos:
+    if not debug.get("marcos") and session_marcos:
+        # Marcos ainda nao projetados em nenhum eixo usado (ex: BR sem SNV
+        # carregado nesta sessao) -- mostra ao menos a posicao original.
         debug["marcos"] = [
             {"br": mk["br"], "km_num": mk["km_num"],
-             "lat": round(mk["lat"], 7), "lon": round(mk["lon"], 7)}
+             "lat": round(mk["lat"], 7), "lon": round(mk["lon"], 7),
+             "proj_lat": None, "proj_lon": None}
             for mk in session_marcos
         ]
 
