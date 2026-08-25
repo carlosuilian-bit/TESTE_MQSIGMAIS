@@ -225,7 +225,7 @@ if body:
                 data=marcos_data,
                 get_position="position",
                 get_fill_color=COR_MARCO,
-                radius_units="pixels",
+                radius_units='"pixels"',
                 get_radius=3,
                 pickable=True,
             ))
@@ -254,7 +254,7 @@ if body:
                 data=pontos_data,
                 get_position="position",
                 get_fill_color=COR_PONTO,
-                radius_units="pixels",
+                radius_units='"pixels"',
                 get_radius=ponto_radius + 2 if ponto_mapa is not None else ponto_radius,
                 pickable=True,
             ))
@@ -293,7 +293,7 @@ if body:
                     data=mapa_df,
                     get_position=["longitude", "latitude"],
                     get_fill_color=[239, 68, 68],
-                    radius_units="pixels",
+                    radius_units='"pixels"',
                     get_radius=ponto_radius,
                     pickable=True,
                 )],
