@@ -372,11 +372,12 @@ def flatten_resultados_download(body: dict) -> list:
 
     linhas = []
     for r in body.get("resultados", []):
+        lat = r.get("lat")
+        lon = r.get("lon")
         row = {
             "indice": r.get("indice"),
             "id": r.get("id"),
-            "lat": r.get("lat"),
-            "lon": r.get("lon"),
+            "Coordenadas": f"{lat}, {lon}" if lat is not None and lon is not None else None,
         }
 
         if "erro" in r:

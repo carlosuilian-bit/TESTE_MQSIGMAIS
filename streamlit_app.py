@@ -137,7 +137,7 @@ if calcular:
     df_download = pd.DataFrame(flatten_resultados_download(body))
     st.download_button(
         "Baixar Resultados (CSV)",
-        data=df_download.to_csv(index=False).encode("utf-8"),
+        data=df_download.to_csv(index=False, sep=";").encode("utf-8"),
         file_name="resultados_km.csv",
         mime="text/csv",
     )
