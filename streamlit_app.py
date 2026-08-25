@@ -218,8 +218,8 @@ if body:
                 data=marcos_data,
                 get_position="position",
                 get_fill_color=COR_MARCO,
-                get_radius=25,
-                radius_min_pixels=3,
+                radius_units="pixels",
+                get_radius=5,
                 pickable=True,
             ))
             if ponto_mapa is None:
@@ -247,8 +247,8 @@ if body:
                 data=pontos_data,
                 get_position="position",
                 get_fill_color=COR_PONTO,
-                get_radius=60 if ponto_mapa is not None else 35,
-                radius_min_pixels=7 if ponto_mapa is not None else 4,
+                radius_units="pixels",
+                get_radius=9 if ponto_mapa is not None else 6,
                 pickable=True,
             ))
             focus_coords.extend(p["position"] for p in pontos_data)
@@ -280,4 +280,20 @@ if body:
         mapa_df = mapa_base[["lat", "lon"]].dropna().rename(columns={"lat": "latitude", "lon": "longitude"})
         if not mapa_df.empty:
             st.subheader("Mapa dos pontos consultados")
-            st.map(mapa_df)
+            st.pydeck_chart(pdk.Deck(
+                layers=[pdk.Layer(
+                    "ScatterplotLayer",
+                    data=mapa_df,
+                    get_position=["longitude", "latitude"],
+                    get_fill_color=[239, 68, 68],
+                    radius_units="pixels",
+                    get_radius=6,
+                    pickable=True,
+                )],
+                initial_view_state=pdk.ViewState(
+                    latitude=mapa_df["latitude"].mean(),
+                    longitude=mapa_df["longitude"].mean(),
+                    zoom=11,
+                ),
+                map_style=None,
+            ))
