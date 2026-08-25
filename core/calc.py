@@ -1,7 +1,5 @@
 """Lógica de cálculo por camada + orquestrador principal (sem dependência de Flask)."""
 
-import math
-
 from shapely.geometry import Point
 
 from core.errors import CalcError
@@ -25,15 +23,12 @@ def _pair_distance_score(a, b, click_utm_pt):
 
 def _interpolate_km(markers_sorted, d_query, click_utm_pt=None):
     """
-    Interpola a posição quilométrica entre os dois marcos consecutivos (por
-    d_on_eixo) que envolvem d_query.
+    Calcula a quilometragem usando a distancia fisica no eixo a partir do
+    marco-base do par que envolve d_query.
 
-    Independente do sentido em que o eixo foi desenhado: o KM físico pode
-    crescer OU decrescer conforme d_on_eixo aumenta (depende de como o KML
-    foi digitalizado), e a interpolação linear entre os dois marcos vizinhos
-    lida com ambos os casos corretamente — diferente de simplesmente pegar o
-    marco anterior e somar metros, que só funciona se o KM crescer no mesmo
-    sentido do eixo.
+    Se os marcos KM 153 e KM 154 estao separados por 1500 m, um ponto a
+    700 m do KM 153 vira 153+700; um ponto a 1010 m vira 153+999. O teto
+    evita que a metragem ultrapasse o formato valido de tres digitos.
 
     Retorna (km, metros).
     """
@@ -56,12 +51,14 @@ def _interpolate_km(markers_sorted, d_query, click_utm_pt=None):
         idx = len(markers_sorted) - 2
 
     a, b = markers_sorted[idx], markers_sorted[idx + 1]
-    span = b["d_on_eixo"] - a["d_on_eixo"]
-    frac = (d_query - a["d_on_eixo"]) / span if span > 0 else 0.0
+    if a["km_num"] <= b["km_num"]:
+        km = a["km_num"]
+        offset_m = d_query - a["d_on_eixo"]
+    else:
+        km = b["km_num"]
+        offset_m = b["d_on_eixo"] - d_query
 
-    km_pos = a["km_num"] + (b["km_num"] - a["km_num"]) * frac
-    km     = math.floor(km_pos)
-    metros = max(0, min(999, round((km_pos - km) * 1000)))
+    metros = max(0, min(999, round(offset_m)))
     return km, metros
 
 
